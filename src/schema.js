@@ -207,7 +207,7 @@ export class NodeType {
     let topType = schema.spec.topNode || "doc"
     if (!result[topType]) throw new RangeError("Schema is missing its top node type ('" + topType + "')")
     if (!result.text) throw new RangeError("Every schema needs a 'text' type")
-    for (let _ in result.text.attrs) throw new RangeError("The text node type should not have attributes")
+    // for (let _ in result.text.attrs) throw new RangeError("The text node type should not have attributes")
 
     return result
   }
