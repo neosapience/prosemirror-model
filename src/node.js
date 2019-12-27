@@ -234,6 +234,22 @@ export class Node {
     return found
   }
 
+  rangeHasQueryMark (from, to, type, attrs) {
+    var found = false;
+    if (to > from) { this.nodesBetween(from, to, function (node) {
+      let ret = type.isInSet(node.marks)
+      if (ret && ret.type.name === 'query') {
+        for(const key in attrs) {
+          if (attrs[key] === ret.attrs[key]) {
+            found = true;
+          }
+        }
+      }
+      return !found
+    }); }
+    return found
+  };  
+
   // :: bool
   // True when this is a block (non-inline node)
   get isBlock() { return this.type.isBlock }

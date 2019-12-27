@@ -1,9 +1,9 @@
 {
-  "name": "@neosapience/prosemirror-model",
+  "name": "prosemirror-model",
   "version": "1.8.2",
   "description": "ProseMirror's document model",
   "main": "src/index.js",
-  "module": "dist/index.es.js",
+  "module": "src/index.js",
   "license": "MIT",
   "maintainers": [
     {
