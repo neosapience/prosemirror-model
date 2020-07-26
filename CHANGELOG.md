@@ -1,3 +1,39 @@
+## 1.11.0 (2020-07-08)
+
+### New features
+
+Resolved positions have a new convenience method, `posAtIndex`, which can resolve a depth and index to a position.
+
+## 1.10.1 (2020-07-08)
+
+### Bug fixes
+
+Fix a bug that prevented non-canonical list structure from being normalized.
+
+## 1.10.0 (2020-05-25)
+
+### Bug fixes
+
+Avoid fixing directly nested list nodes during DOM parsing when it looks like the schema allows those.
+
+### New features
+
+DOM parser rules can now specify `closeParent: true` to have the effect of closing their parent node when matched.
+
+## 1.9.1 (2020-01-17)
+
+### Bug fixes
+
+Marks found in the DOM at the wrong level (for example, a bold style on a block node) are now properly moved to the node content.
+
+## 1.9.0 (2020-01-07)
+
+### New features
+
+The `NodeType` method [`hasRequiredAttrs`](https://prosemirror.net/docs/ref/#model.NodeType.hasRequiredAttrs) is now public.
+
+Element and attribute names in [`DOMOutputSpec`](https://prosemirror.net/docs/ref/#model.DOMOutputSpec) structures can now contain namespaces.
+
 ## 1.8.2 (2019-11-20)
 
 ### Bug fixes

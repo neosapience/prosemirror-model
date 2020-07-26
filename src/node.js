@@ -222,8 +222,8 @@ export class Node {
 
   resolveNoCache(pos) { return ResolvedPos.resolve(this, pos) }
 
-  // :: (number, number, MarkType) → bool
-  // Test whether a mark of the given type occurs in this document
+  // :: (number, number, union<Mark, MarkType>) → bool
+  // Test whether a given mark or mark type occurs in this document
   // between the two given positions.
   rangeHasMark(from, to, type) {
     let found = false
@@ -335,11 +335,6 @@ export class Node {
   canAppend(other) {
     if (other.content.size) return this.canReplace(this.childCount, this.childCount, other.content)
     else return this.type.compatibleContent(other.type)
-  }
-
-  // Unused. Left for backwards compatibility.
-  defaultContentType(at) {
-    return this.contentMatchAt(at).defaultType
   }
 
   // :: ()

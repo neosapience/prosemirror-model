@@ -95,6 +95,10 @@ import {Mark} from "./mark"
 //   ignore:: ?bool
 //   When true, ignore content that matches this rule.
 //
+//   closeParent:: ?bool
+//   When true, finding an element that matches this rule will close
+//   the current node.
+//
 //   skip:: ?bool
 //   When true, ignore the node that matches this rule, but do parse
 //   its content.
@@ -154,6 +158,13 @@ export class DOMParser {
     rules.forEach(rule => {
       if (rule.tag) this.tags.push(rule)
       else if (rule.style) this.styles.push(rule)
+    })
+
+    // Only normalize list elements when lists in the schema can't directly contain themselves
+    this.normalizeLists = !this.tags.some(r => {
+      if (!/^(ul|ol)\b/.test(r.tag) || !r.node) return false
+      let node = schema.nodes[r.node]
+      return node.contentMatch.matchType(node)
     })
   }
 
@@ -278,15 +289,19 @@ function wsOptionsFor(preserveWhitespace) {
 }
 
 class NodeContext {
-  constructor(type, attrs, marks, solid, match, options) {
+  constructor(type, attrs, marks, pendingMarks, solid, match, options) {
     this.type = type
     this.attrs = attrs
     this.solid = solid
     this.match = match || (options & OPT_OPEN_LEFT ? null : type.contentMatch)
     this.options = options
     this.content = []
+    // Marks applied to this node itself
     this.marks = marks
+    // Marks applied to its children
     this.activeMarks = Mark.none
+    // Marks that can't apply here, but will be used in children if possible
+    this.pendingMarks = pendingMarks
   }
 
   findWrapping(node) {
@@ -308,7 +323,7 @@ class NodeContext {
     return this.match.findWrapping(node.type)
   }
 
-finish(openEnd) {
+  finish(openEnd) {
     if (!(this.options & OPT_PRESERVE_WS)) { // Strip trailing whitespace
       let last = this.content[this.content.length - 1], m
       if (last && last.isText && (m = /[ \t\r\n\u000c]+$/.exec(last.text))) {
@@ -321,6 +336,17 @@ finish(openEnd) {
       content = content.append(this.match.fillBefore(Fragment.empty, true))
     return this.type ? this.type.create(this.attrs, content, this.marks) : content
   }
+
+  applyPending(nextType) {
+    for (let i = 0, pending = this.pendingMarks; i < pending.length; i++) {
+      let mark = pending[i]
+      if ((this.type ? this.type.allowsMarkType(mark.type) : markMayApply(mark.type, nextType)) &&
+          !mark.isInSet(this.activeMarks)) {
+        this.activeMarks = mark.addToSet(this.activeMarks)
+        this.pendingMarks = mark.removeFromSet(this.pendingMarks)
+      }
+    }
+  }
 }
 
 class ParseContext {
@@ -331,16 +357,15 @@ class ParseContext {
     // : Object The options passed to this parse.
     this.options = options
     this.isOpen = open
-    this.pendingMarks = []
     let topNode = options.topNode, topContext
     let topOptions = wsOptionsFor(options.preserveWhitespace) | (open ? OPT_OPEN_LEFT : 0)
     if (topNode)
-      topContext = new NodeContext(topNode.type, topNode.attrs, Mark.none, true,
+      topContext = new NodeContext(topNode.type, topNode.attrs, Mark.none, Mark.none, true,
                                    options.topMatch || topNode.type.contentMatch, topOptions)
     else if (open)
-      topContext = new NodeContext(null, null, Mark.none, true, null, topOptions)
+      topContext = new NodeContext(null, null, Mark.none, Mark.none, true, null, topOptions)
     else
-      topContext = new NodeContext(parser.schema.topNodeType, null, Mark.none, true, null, topOptions)
+      topContext = new NodeContext(parser.schema.topNodeType, null, Mark.none, Mark.none, true, null, topOptions)
     this.nodes = [topContext]
     // : [Mark] The current set of marks
     this.open = 0
@@ -361,10 +386,10 @@ class ParseContext {
       this.addTextNode(dom)
     } else if (dom.nodeType == 1) {
       let style = dom.getAttribute("style")
-      let marks = style ? this.readStyles(parseStyles(style)) : null
+      let marks = style ? this.readStyles(parseStyles(style)) : null, top = this.top
       if (marks != null) for (let i = 0; i < marks.length; i++) this.addPendingMark(marks[i])
       this.addElement(dom)
-      if (marks != null) for (let i = 0; i < marks.length; i++) this.removePendingMark(marks[i])
+      if (marks != null) for (let i = 0; i < marks.length; i++) this.removePendingMark(marks[i], top)
     }
   }
 
@@ -400,12 +425,13 @@ class ParseContext {
   // none is found, the element's content nodes are added directly.
   addElement(dom) {
     let name = dom.nodeName.toLowerCase()
-    if (listTags.hasOwnProperty(name)) normalizeList(dom)
+    if (listTags.hasOwnProperty(name) && this.parser.normalizeLists) normalizeList(dom)
     let rule = (this.options.ruleFromNode && this.options.ruleFromNode(dom)) || this.parser.matchTag(dom, this)
     if (rule ? rule.ignore : ignoreTags.hasOwnProperty(name)) {
       this.findInside(dom)
-    } else if (!rule || rule.skip) {
-      if (rule && rule.skip.nodeType) dom = rule.skip
+    } else if (!rule || rule.skip || rule.closeParent) {
+      if (rule && rule.closeParent) this.open = Math.max(0, this.open - 1)
+      else if (rule && rule.skip.nodeType) dom = rule.skip
       let sync, top = this.top, oldNeedsBlock = this.needsBlock
       if (blockTags.hasOwnProperty(name)) {
         sync = true
@@ -476,7 +502,7 @@ class ParseContext {
       this.addAll(contentDOM, sync)
     }
     if (sync) { this.sync(startIn); this.open-- }
-    if (mark) this.removePendingMark(mark)
+    if (mark) this.removePendingMark(mark, startIn)
   }
 
   // : (dom.Node, ?NodeBuilder, ?number, ?number)
@@ -528,7 +554,7 @@ class ParseContext {
     if (this.findPlace(node)) {
       this.closeExtra()
       let top = this.top
-      this.applyPendingMarks(top)
+      top.applyPending(node.type)
       if (top.match) top.match = top.match.matchType(node.type)
       let marks = top.activeMarks
       for (let i = 0; i < node.marks.length; i++)
@@ -540,25 +566,12 @@ class ParseContext {
     return false
   }
 
-  applyPendingMarks(top) {
-    for (let i = 0; i < this.pendingMarks.length; i++) {
-      let mark = this.pendingMarks[i]
-      if ((!top.type || top.type.allowsMarkType(mark.type)) && !mark.isInSet(top.activeMarks)) {
-        top.activeMarks = mark.addToSet(top.activeMarks)
-        this.pendingMarks.splice(i--, 1)
-      }
-    }
-  }
-
   // : (NodeType, ?Object) → bool
   // Try to start a node of the given type, adjusting the context when
   // necessary.
   enter(type, attrs, preserveWS) {
     let ok = this.findPlace(type.create(attrs))
-    if (ok) {
-      this.applyPendingMarks(this.top)
-      this.enterInner(type, attrs, true, preserveWS)
-    }
+    if (ok) this.enterInner(type, attrs, true, preserveWS)
     return ok
   }
 
@@ -566,10 +579,11 @@ class ParseContext {
   enterInner(type, attrs, solid, preserveWS) {
     this.closeExtra()
     let top = this.top
+    top.applyPending(type)
     top.match = top.match && top.match.matchType(type, attrs)
     let options = preserveWS == null ? top.options & ~OPT_OPEN_LEFT : wsOptionsFor(preserveWS)
     if ((top.options & OPT_OPEN_LEFT) && top.content.length == 0) options |= OPT_OPEN_LEFT
-    this.nodes.push(new NodeContext(type, attrs, top.activeMarks, solid, null, options))
+    this.nodes.push(new NodeContext(type, attrs, top.activeMarks, top.pendingMarks, solid, null, options))
     this.open++
   }
 
@@ -593,20 +607,6 @@ class ParseContext {
     for (let i = this.open; i >= 0; i--) if (this.nodes[i] == to) {
       this.open = i
       return
-    }
-  }
-
-  addPendingMark(mark) {
-    this.pendingMarks.push(mark)
-  }
-
-  removePendingMark(mark) {
-    let found = this.pendingMarks.lastIndexOf(mark)
-    if (found > -1) {
-      this.pendingMarks.splice(found, 1)
-    } else {
-      let top = this.top
-      top.activeMarks = mark.removeFromSet(top.activeMarks)
     }
   }
 
@@ -697,6 +697,20 @@ class ParseContext {
       if (type.isTextblock && type.defaultAttrs) return type
     }
   }
+
+  addPendingMark(mark) {
+    this.top.pendingMarks = mark.addToSet(this.top.pendingMarks)
+  }
+
+  removePendingMark(mark, upto) {
+    for (let depth = this.open; depth >= 0; depth--) {
+      let level = this.nodes[depth]
+      let found = level.pendingMarks.lastIndexOf(mark)
+      if (found > -1) level.pendingMarks = mark.removeFromSet(level.pendingMarks)
+      else level.activeMarks = mark.removeFromSet(level.activeMarks)
+      if (level == upto) break
+    }
+  }
 }
 
 // Kludge to work around directly nested list nodes produced by some
@@ -733,4 +747,24 @@ function copy(obj) {
   let copy = {}
   for (let prop in obj) copy[prop] = obj[prop]
   return copy
+}
+
+// Used when finding a mark at the top level of a fragment parse.
+// Checks whether it would be reasonable to apply a given mark type to
+// a given node, by looking at the way the mark occurs in the schema.
+function markMayApply(markType, nodeType) {
+  let nodes = nodeType.schema.nodes
+  for (let name in nodes) {
+    let parent = nodes[name]
+    if (!parent.allowsMarkType(markType)) continue
+    let seen = [], scan = match => {
+      seen.push(match)
+      for (let i = 0; i < match.edgeCount; i++) {
+        let {type, next} = match.edge(i)
+        if (type == nodeType) return true
+        if (seen.indexOf(next) < 0 && scan(next)) return true
+      }
+    }
+    if (scan(parent.contentMatch)) return true
+  }
 }
